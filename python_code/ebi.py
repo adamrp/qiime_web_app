@@ -10,17 +10,22 @@ from xml.sax.saxutils import escape
 
 from make_per_sample_fastq import split_helper
 
+
 class InvalidMetadataError(Exception):
     pass
+
 
 class SampleAlreadyExistsError(Exception):
     pass
 
+
 class NoXMLError(Exception):
     pass
 
+
 def clean_whitespace(s):
     return ' '.join(s.split())
+
 
 def iter_file_via_list_of_dicts(input_file):
     """Iterates over a TSV file, yielding dicts keyed by the column headers
@@ -144,8 +149,7 @@ class EBISubmission(object):
         study_set = ET.Element('STUDY_SET', {
             'xmlns:xsi': "http://www.w3.org/2001/XMLSchema-instance",
             'xsi:noNamespaceSchemaLocation': "ftp://ftp.sra.ebi.ac.uk/meta/xsd"
-                                             "/sra_1_3/SRA.study.xsd"}
-        )
+                                             "/sra_1_3/SRA.study.xsd"})
 
         study = ET.SubElement(study_set, 'STUDY', {
             'alias': self._get_study_alias(),
@@ -237,8 +241,7 @@ class EBISubmission(object):
         sample_set = ET.Element('SAMPLE_SET', {
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
             "xsi:noNamespaceSchemaLocation": "ftp://ftp.sra.ebi.ac.uk/meta/xsd"
-                                             "/sra_1_3/SRA.sample.xsd"}
-        )
+                                             "/sra_1_3/SRA.sample.xsd"})
 
         for sample_name, sample_info in sorted(self.samples.iteritems()):
             sample = ET.SubElement(sample_set, 'SAMPLE', {
@@ -378,8 +381,7 @@ class EBISubmission(object):
         experiment_set = ET.Element('EXPERIMENT_SET', {
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
             "xsi:noNamespaceSchemaLocation": "ftp://ftp.sra.ebi.ac.uk/meta/xsd"
-                                             "/sra_1_3/SRA.experiment.xsd"}
-        )
+                                             "/sra_1_3/SRA.experiment.xsd"})
         for sample_name, sample_info in sorted(self.samples.iteritems()):
             sample_alias = self._get_sample_alias(sample_name)
             for row_number, prep_info in enumerate(sample_info['preps']):
@@ -401,12 +403,12 @@ class EBISubmission(object):
                                                    'DESIGN_DESCRIPTION')
                 design_description.text = escape(clean_whitespace(
                     prep_info['experiment_design_description']))
-                sample_descriptor = ET.SubElement(design, 'SAMPLE_DESCRIPTOR',
-                    {'refname': sample_alias}
+                sample_descriptor = ET.SubElement(
+                    design, 'SAMPLE_DESCRIPTOR', {'refname': sample_alias}
                 )
 
                 self._generate_library_descriptor(
-                    design, sample_name, row_number, 
+                    design, sample_name, row_number,
                     prep_info['library_construction_protocol']
                 )
 
@@ -420,8 +422,8 @@ class EBISubmission(object):
                 instrument_model.text = 'unspecified'
 
                 if prep_info:
-                    experiment_attributes = ET.SubElement(experiment,
-                                                          'EXPERIMENT_ATTRIBUTES')
+                    experiment_attributes = ET.SubElement(
+                        experiment, 'EXPERIMENT_ATTRIBUTES')
                     self._add_dict_as_tags_and_values(experiment_attributes,
                                                       'EXPERIMENT_ATTRIBUTE',
                                                       prep_info)
@@ -436,12 +438,11 @@ class EBISubmission(object):
         xml.etree.Element
             The root elelement of the generated ``ElementTree``
         """
-        #TODO: md5 stuff
+        # TODO: md5 stuff
         run_set = ET.Element('RUN_SET', {
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-            "xsi:noNamespaceSchemaLocation": "ftp://ftp.sra.ebi.ac.uk/meta/xsd/"
-                                             "sra_1_3/SRA.run.xsd"}
-        )
+            "xsi:noNamespaceSchemaLocation": "ftp://ftp.sra.ebi.ac.uk/meta/xsd"
+                                             "/sra_1_3/SRA.run.xsd"})
         for sample_name, sample_info in sorted(self.samples.iteritems()):
             sample_alias = self._get_sample_alias(sample_name)
             for row_number, prep_info in enumerate(sample_info['preps']):
@@ -465,7 +466,7 @@ class EBISubmission(object):
                     'filetype': file_type,
                     'quality_scring_system': 'phred',
                     'checksum_method': 'MD5',
-                    'checksum': 'NONE'} # TODO: checksum
+                    'checksum': 'NONE'}  # TODO: checksum
                 )
 
         return run_set
@@ -500,8 +501,7 @@ class EBISubmission(object):
         submission_set = ET.Element('SUBMISSION_SET', {
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
             "xsi:noNamespaceSchemaLocation": "ftp://ftp.sra.ebi.ac.uk/meta/xsd"
-                                             "/sra_1_3/SRA.submission.xsd"}
-        )
+                                             "/sra_1_3/SRA.submission.xsd"})
         submission = ET.SubElement(submission_set, 'SUBMISSION', {
             'alias': self._get_submission_alias(),
             'center_name': 'CCME-COLORADO'}
@@ -701,20 +701,18 @@ class EBISubmission(object):
                     'experiment_design_description')
                 library_construction_protocol = prep.pop(
                     'library_construction_protocol')
-                
+
                 file_path = join(per_sample_fastq_dir, sample_name+'.fastq')
                 self.add_sample_prep(sample_name, platform, 'fastq',
                                      file_path, experiment_design_description,
                                      library_construction_protocol,
                                      empty_value='unknown', **prep)
 
-
     @classmethod
-    def from_templates_and_demux_fastq(cls, study_id, study_title,
-                                      study_abstract, investigation_type,
-                                      sample_template, prep_templates,
-                                      demux_seqs_fp, output_dir, 
-                                      **kwargs):
+    def from_templates_and_demux_fastq(
+            cls, study_id, study_title, study_abstract, investigation_type,
+            sample_template, prep_templates, demux_seqs_fp, output_dir,
+            **kwargs):
         """Generate an ``EBISubmission`` from templates and a sequence file
 
         Parameters
@@ -740,14 +738,14 @@ class EBISubmission(object):
         # generate the per-sample FASTQ files
         with open(demux_seqs_fp, 'U') as demux_seqs:
             split_helper(demux_seqs, output_dir, sequence_buffer_size=1000)
-        
+
         # initialize the EBISubmission object
         submission = cls(study_id, study_title, study_abstract,
                          investigation_type, **kwargs)
-        
+
         submission.add_samples_from_templates(
             sample_template, prep_templates, output_dir)
-        
+
         return submission
 
     @classmethod
@@ -755,7 +753,7 @@ class EBISubmission(object):
                                              study_abstract,
                                              investigation_type,
                                              sample_template, prep_templates,
-                                             per_sample_fastq_dir, 
+                                             per_sample_fastq_dir,
                                              **kwargs):
         """Generate an ``EBISubmission`` from templates and FASTQ files
 
@@ -771,7 +769,7 @@ class EBISubmission(object):
             Path to the direcotry containing per-sample FASTQ files containing
             The sequence labels should be:
             ``SampleID_SequenceNumber And Additional Notes if Applicable``
-        
+
         Notes
         -----
         - kwargs will be passed directly to the ``EBISubmission`` constructor,
@@ -781,7 +779,7 @@ class EBISubmission(object):
         # initialize the EBISubmission object
         submission = cls(study_id, study_title, study_abstract,
                          investigation_type, **kwargs)
-        
+
         submission.add_samples_from_templates(sample_template,
                                               prep_templates,
                                               per_sample_fastq_dir)
