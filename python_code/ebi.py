@@ -506,18 +506,39 @@ class EBISubmission(object):
             'alias': self._get_submission_alias(),
             'center_name': 'CCME-COLORADO'}
         )
+
         actions = ET.SubElement(submission, 'ACTIONS')
-        study_action = ET.SubElement(actions, 'ACTION', {
-            'schema': 'study'}
+
+        study_action = ET.SubElement(actions, 'ACTION')
+        study_action_2 = ET.SubElement(study_action, action,
+            {
+                'schema': 'study',
+                'source': self.study_xml_fp
+            }
         )
-        sample_action = ET.SubElement(actions, 'ACTION', {
-            'schema': 'sample'}
+
+        sample_action = ET.SubElement(actions, 'ACTION')
+        sample_action_2 = ET.SubElement(sample_action, action,
+            {
+                'schema': 'sample',
+                'source': self.sample_xml_fp
+            }
         )
-        experiment_action = ET.SubElement(actions, 'ACTION', {
-            'schema': 'experiment'}
+
+        experiment_action = ET.SubElement(actions, 'ACTION')
+        experiment_action_2 = ET.SubElement(experiment_action, action,
+            {
+                'schema': 'experiment',
+                'source': self.experiment_xml_fp
+            }
         )
-        run_action = ET.SubElement(actions, 'ACTION', {
-            'schema': 'run'}
+
+        run_action = ET.SubElement(actions, 'ACTION')
+        run_action_2 = ET.SubElement(run_action, action,
+            {
+                'schema': 'run',
+                'source': self.run_xml_fp
+            }
         )
 
         if action is 'ADD':
