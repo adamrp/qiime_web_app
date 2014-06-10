@@ -1,0 +1,169 @@
+#!/usr/bin/env python
+
+import sys
+from os.path import join, exists
+from os import mkdir, environ
+
+import click
+#from qiime.util import qiime_system_call
+
+from ebi import EBISubmission
+
+
+ASCP_COMMAND = 'ascp -QT -k2 -L- {0}/*.gz {1}@fasp.sra.ebi.ac.uk:/.'
+EBI_AUTH = "?auth=ERA%20{0}%20{1}%3D"
+CURL_COMMAND = (
+    'curl -F "SUBMISSION=@{0}" -F "STUDY=@{1}" -F "SAMPLE=@{2}" '
+    '-F "RUN=@{3}" -F"EXPERIMENT=@{4}" '
+    '"https://www.ebi.ac.uk/ena/submit/drop-box/submit/{5}"')
+
+
+def parse_kv(lines):
+    """Parse kv data
+
+    The expected structure of the file is:
+
+    key=value
+
+    All values are stripped of whitespace and newlines. All keys and values
+    are interpreted as str.
+
+    Parameters
+    ----------
+    lines : file-like object
+
+    Returns
+    -------
+    dict
+        each key/value combination
+    """
+    result = {}
+    for line in lines:
+        try:
+            key, value = line.split('=', 1)
+        except ValueError:
+            raise ValueError("malformed line: %s" % line.strip())
+
+        result[key] = value
+    return result
+
+
+@click.group()
+def cli():
+    pass
+
+
+@cli.command()
+@click.option('--input-fastq', required=True, type=click.File('r'))
+@click.option('--input-prep-template', required=True, multiple=True,
+              type=click.File('r'))
+@click.option('--input-sample-template', required=True, type=click.File('r'))
+@click.option('--input-study-template', required=True, type=click.File('r'))
+@click.option('--output-directory', required=True, type=str)
+@click.option('--credentials', required=True, type=click.File('r'))
+def add(input_fastq, input_prep_template, input_sample_template,
+        input_study_template, output_directory, credentials):
+
+    if exists(output_directory):
+        raise IOError("%s already exists!" % output_directory)
+    else:
+        mkdir(output_directory)
+
+    study_fp = join(output_directory, 'study.xml')
+    sample_fp = join(output_directory, 'sample.xml')
+    exp_fp = join(output_directory, 'experiment.xml')
+    run_fp = join(output_directory, 'run.xml')
+    sub_fp = join(output_directory, 'submission.xml')
+
+    credentials = parse_kv(credentials)
+    study_details = parse_kv(input_study_template)
+
+    study = study_details.copy()
+    sequence_submission = credentials.copy()
+    metadata_submission = credentials.copy()
+
+    study['sample_template'] = input_sample_template
+    study['prep_templates'] = input_prep_template
+    study['demux_seqs_fp'] = input_fastq
+    study['output_dir'] = output_directory
+
+    sequence_submission['source_dir'] = output_directory
+
+    metadata_submission['study_xml'] = study_fp
+    metadata_submission['sample_xml'] = sample_fp
+    metadata_submission['experiment_xml'] = exp_fp
+    metadata_submission['run_xml'] = run_fp
+    metadata_submission['sub_xml'] = sub_fp
+
+    ebi_submit = EBISubmission.from_templates_and_demux_fastq(**study)
+    ebi_submit.write_all_xml_files(study_fp, sample_fp, exp_fp, run_fp, sub_fp,
+                                   'ADD')
+
+    _submit_sequence(**sequence_submission)
+    _submit_metadata(**metadata_submission)
+
+
+def _submit_sequence(username, password, source_dir, **kwargs):
+    """Submit sequences
+
+    Parameters
+    ----------
+    username : str
+        EBI FTP username
+    password : str
+        EBI FTP password
+    source_dir : file path
+        Path that contains per-sample gzip'd fastq files
+    """
+    environ['ASPERA_SCP_PASS'] = password
+    cmd = ASCP_COMMAND.format(source_dir, username)
+    o, e, exit_status = qiime_system_call(cmd)
+    environ['ASPERA_SCP_PASS'] = ""
+
+    if exit_status != 0:
+        sys.stderr.write(e)
+        sys.exit(1)
+
+
+def _submit_metadata(username, rest_key, study_xml, sample_xml,
+                     experiment_xml, run_xml, sub_xml, **kwargs):
+    """Submit metadata
+
+    Parameters
+    ----------
+    username : str
+        EBI RESTful interface username
+    rest_key : str
+        EBI RESTful magic key
+    study_xml : file path
+        Study specific metadata
+    sample_xml : file path
+        Sample specific metadata
+    experiment_xml : file path
+        Experiment specific metadata
+    run_xml : file path
+        Run specific metadata
+    submission_xml : file path
+        Submission specific metadata
+
+    Returns
+    -------
+    list of str
+        list of the sample accessions
+
+    """
+
+    auth = EBI_AUTH.format(username, rest_key)
+    cmd = CURL_COMMAND.format(sub_xml, study_xml, sample_xml, run_xml,
+                              experiment_xml, auth)
+    o, e, exit_status = qiime_system_call(cmd)
+
+    if exit_status != 0:
+        sys.stderr.write(e)
+        sys.exit(1)
+
+    return o.splitlines()
+
+
+if __name__ == '__main__':
+    cli()

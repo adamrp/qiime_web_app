@@ -6,9 +6,10 @@ from tempfile import mkdtemp
 from shutil import rmtree
 from os.path import join, exists
 
-from make_per_sample_fastq import split_helper
+from ebi import split_helper
 
-class MakePerSampleFastqTests(TestCase):
+
+class EBITests(TestCase):
     def setUp(self):
         self.output_dir = mkdtemp()
         self.test_fastq = StringIO(test_fastq)
