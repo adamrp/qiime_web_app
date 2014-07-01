@@ -3,11 +3,13 @@
 from collections import defaultdict
 from os.path import join, exists
 from os import mkdir
+from gzip import open as gz_open
 
 import click
 from skbio.parse.sequences.fastq import parse_fastq
+from skbio.format.sequences.fastq import format_fastq_record
 
-def write_fastq(output_file, fastq_data, ascii_increment=33):
+def write_fastq(output_file, fastq_data):
     """Writes tuples of (defline, seq, qual) to an output file
 
     Parameters
@@ -23,7 +25,7 @@ def write_fastq(output_file, fastq_data, ascii_increment=33):
         output_file.write('@%s\n%s\n+\n%s\n' % (defline, seq, qual))
 
 def split_helper(input_fastq, output_directory, sequence_buffer_size=1000,
-                 ascii_increment=33):
+                 gzip=True):
     """Splits a demultiplexed FASTQ file into per-sample FASTQ files
 
     Parameters
@@ -36,6 +38,8 @@ def split_helper(input_fastq, output_directory, sequence_buffer_size=1000,
     sequence_buffer_size : int
         The number of sequences to hold in memory for each sample before
         writing them to disk.
+    gzip : bool, optional
+        If ``True``, then the generated FASTQ files will be gzipped
 
     Notes
     -----
@@ -48,7 +52,9 @@ def split_helper(input_fastq, output_directory, sequence_buffer_size=1000,
 
     per_sample_seqs = defaultdict(list)
     per_sample_counts = defaultdict(int)
-    for defline, seq, qual in parse_fastq(input_fastq):
+    unique_filepaths = set()
+    for defline, seq, qual in parse_fastq(input_fastq,
+                                          enforce_qual_range=False):
         label = defline.split()[0]
         sample_name, sequence_number = label.rsplit('_', 1)
 
@@ -56,9 +62,12 @@ def split_helper(input_fastq, output_directory, sequence_buffer_size=1000,
         per_sample_counts[sample_name] += 1
 
         if per_sample_counts[sample_name] > sequence_buffer_size:
-            with open(join(output_directory, sample_name+'.fastq'), 'a') \
+            output_filepath = join(output_directory, sample_name+'.fastq')
+            unique_filepaths.add(output_filepath)
+            with open(output_filepath, 'a') \
                     as outfile:
-                write_fastq(outfile, per_sample_seqs[sample_name])
+                outfile.write(
+                    format_fastq_record(*per_sample_seqs[sample_name]))
 
             per_sample_seqs[sample_name] = []
             per_sample_counts[sample_name] = 0
@@ -67,9 +76,15 @@ def split_helper(input_fastq, output_directory, sequence_buffer_size=1000,
         if not entries:
             continue
 
-        with open(join(output_directory, sample_name+'.fastq'), 'a') \
+        output_filepath = join(output_directory, sample_name+'.fastq')
+        unique_filepaths.add(output_filepath)
+        with open(output_filepath, 'a') \
                 as outfile:
-            write_fastq(outfile, per_sample_seqs[sample_name])
+            outfile.write(
+                format_fastq_record(*per_sample_seqs[sample_name]))
+
+    if gzip:
+        pass
 
 @click.group()
 def cli():
@@ -79,11 +94,11 @@ def cli():
 @click.option('--input-fastq', required=True, type=click.File('r'))
 @click.option('--sequence-buffer-size', default=1000)
 @click.option('--output-directory', required=True, type=str)
-@click.option('--ascii-increment', default=33)
+@click.option('--gzip/--no-gzip', default=True)
 def split(input_fastq, output_directory, sequence_buffer_size,
-          ascii_increment):
+          gzip):
     split_helper(input_fastq, output_directory, sequence_buffer_size,
-                 ascii_increment)
+                 gzip)
 
 if __name__ == '__main__':
     cli()
