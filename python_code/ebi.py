@@ -1,29 +1,37 @@
 #!/usr/bin/env python
 
-from subprocess import Popen, PIPE, STDOUT
 from os.path import basename, exists, join
 from os import mkdir
 from datetime import date, timedelta
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 from xml.sax.saxutils import escape
+from functools import partial
 
 from make_per_sample_fastq import split_helper
 
 
 class InvalidMetadataError(Exception):
+    """Error that is raised when metadata is not representable as a string"""
     pass
 
 
 class SampleAlreadyExistsError(Exception):
+    """Error that is raised when a sample is added to a submission that already
+    has a sample by that name"""
     pass
 
 
 class NoXMLError(Exception):
+    """Error that is raised when the generation of one XML file cannot be
+    completed because it depends on another XML file that has not yet been
+    generated"""
     pass
 
 
 def clean_whitespace(s):
+    """Standardizes whitespace so that there is only ever one space separating
+    tokens"""
     return ' '.join(s.split())
 
 
@@ -47,7 +55,9 @@ def iter_file_via_list_of_dicts(input_file):
     - All column headers will be transformed to lowercase
     - Skips lines containing only whitespace
     """
-    headers = [x.strip().lower() for x in input_file.readline().split('\t')]
+    header_line = input_file.readline()
+    header_line = header_line.lstrip('#')
+    headers = [x.strip().lower() for x in header_line.split('\t')]
     for line in input_file:
         line = line.strip()
         if not line:
@@ -58,8 +68,22 @@ def iter_file_via_list_of_dicts(input_file):
 
 
 class EBISubmission(object):
+    """Define an EBI submission and facilitate generation of required XML files
+
+    Parameters
+    ----------
+    study_id : str
+    study_title : str
+    study_abstract : str
+    investigation_type : str
+        'metagenome', and 'mimarks-survey' are specially recognized and used to
+        set other attributes in the submission, but any string is valid
+    empty_value : str, optional
+        Defaults to "no_data". This is the value that will be used when data
+        for a particular metadata field is missing
+    """
     def __init__(self, study_id, study_title, study_abstract,
-                 investigation_type, empty_value='unknown', **kwargs):
+                 investigation_type, empty_value='no_data', **kwargs):
         self.study_id = study_id
         self.study_title = study_title
         self.study_abstract = study_abstract
@@ -83,18 +107,24 @@ class EBISubmission(object):
         self.library_selection = lib_selections.get(
             self.investigation_type, "unspecififed")
 
-        # This is allows addition of other arbitrary study metadata
+        # This allows addition of other arbitrary study metadata
+        self.additional_metadata = self._stringify_kwargs(kwargs)
+
+        # This will hold the submission's samples, keyed by the sample name
+        self.samples = {}
+
+    def _stringify_kwargs(self, kwargs_dict):
+        """Turns values in a dictionay into strings, None, or self.empty_value
+        """
         try:
-            self.additional_metadata = {
-                str(k): str(v) if v is not None else empty_value
+            result = {
+                str(k): str(v) if v is not None else self.empty_value
                 for k, v in kwargs.iteritems()}
         except ValueError:
             raise InvalidMetadataError("All additional metadata passed via "
                                        "kwargs to the EBISubmission "
-                                       "constructor must be strings")
-
-        # This will hold the submission's samples, keyed by the sample name
-        self.samples = {}
+                                       "constructor must be representatable "
+                                       "as strings.")
 
     def _get_study_alias(self):
         """Format alias using ``self.study_id``"""
@@ -130,7 +160,7 @@ class EBISubmission(object):
     def _add_dict_as_tags_and_values(self, parent_node, attribute_element_name,
                                      data_dict):
         """Format key/value data using a common EBI XML motif"""
-        for attr, val in sorted(data_dict.iteritems()):
+        for attr, val in sorted(data_dict.items()):
             attribute_element = ET.SubElement(parent_node,
                                               attribute_element_name)
             tag = ET.SubElement(attribute_element, 'TAG')
@@ -175,7 +205,7 @@ class EBISubmission(object):
         return study_set
 
     def add_sample(self, sample_name, taxon_id=None, description=None,
-                   empty_value='unknown', **kwargs):
+                   **kwargs):
         """Adds sample information to the current submission
 
         Parameters
@@ -188,16 +218,9 @@ class EBISubmission(object):
         description : str, optional
             Defaults to ``None``. If not provided, the `empty_value` will be
             used for the description
-        empty_value : str, optional
-            Defaults to "unknown". This value will be used for `taxon_id` or
-            `description` when they are not supplied, and for all ``None``
-            values in ``kwargs``
 
         Raises
         ------
-        InvalidMetadataError
-            If metadata is passed via `kwargs` that is not interpretable as
-            a string
         SampleAlreadyExistsError
             If `sample_name` already exists in the ``samples`` dict
         """
@@ -209,24 +232,18 @@ class EBISubmission(object):
 
         self.samples[sample_name] = {}
 
-        self.samples[sample_name]['taxon_id'] = empty_value if \
+        self.samples[sample_name]['taxon_id'] = self.empty_value if \
             taxon_id is None else taxon_id
         self.samples[sample_name]['taxon_id'] = \
             escape(clean_whitespace(self.samples[sample_name]['taxon_id']))
 
-        self.samples[sample_name]['description'] = empty_value if \
+        self.samples[sample_name]['description'] = self.empty_value if \
             description is None else description
         self.samples[sample_name]['description'] = \
             escape(clean_whitespace(self.samples[sample_name]['description']))
 
-        try:
-            self.samples[sample_name]['attributes'] = {
-                str(k): str(v) if v is not None else empty_value
-                for k, v in kwargs.iteritems()}
-
-        except ValueError:
-            raise InvalidMetadataError("All metadata passed to add_sample "
-                                       "via kwargs must be strings.")
+        self.samples[sample_name]['attributes'] = self._stringify_kwargs(
+            kwargs)
 
         self.samples[sample_name]['preps'] = []
 
@@ -271,7 +288,7 @@ class EBISubmission(object):
     def add_sample_prep(self, sample_name, platform, file_type, file_path,
                         experiment_design_description,
                         library_construction_protocol,
-                        empty_value='unknown', **kwargs):
+                        **kwargs):
         """Add prep info for an existing sample
 
         Parameters
@@ -286,26 +303,14 @@ class EBISubmission(object):
             The path to the sequence file for this sample
         experiment_design_description : str
         library_construction_protocol : str
-        empty_value : str, optional
-            Defaults to "unknown". This value will be used for all ``None``
-            values in ``kwargs``
 
         Raises
         ------
-        InvalidMetadataError
-            If metadata is passed via `kwargs` that is not interpretable as
-            a string
         KeyError
             If `sample_name` is not in the list of samples in the
             ``EBISubmission`` object
         """
-        try:
-            prep_info = {str(k): str(v) if v is not None else empty_value
-                         for k, v in kwargs.iteritems()}
-        except ValueError:
-            raise InvalidMetadataError("All metadata passed to "
-                                       "add_sample_prep via kwargs must be "
-                                       "strings.")
+        prep_info = self._stringify_kwargs(kwargs)
 
         prep_info['platform'] = platform
         prep_info['file_type'] = file_type
@@ -321,7 +326,7 @@ class EBISubmission(object):
                                      library_construction_protocol):
         """This XML element (and its subelements) must be written for every
         sample, but its generation depends on only study-level information.
-        Therefore, we can breka it out into its own method.
+        Therefore, we can break it out into its own method.
         """
 
         library_descriptor = ET.SubElement(design, 'LIBRARY_DESCRIPTOR')
@@ -348,7 +353,7 @@ class EBISubmission(object):
     def _generate_spot_descriptor(self, design, platform):
         """This XML element (and its subelements) must be written for every
         sample, but its generation depends on only study-level information.
-        Therefore, we can breka it out into its own method.
+        Therefore, we can break it out into its own method.
         """
         # This section applies only to the LS454 platform
         if platform is not 'LS454':
@@ -382,7 +387,7 @@ class EBISubmission(object):
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
             "xsi:noNamespaceSchemaLocation": "ftp://ftp.sra.ebi.ac.uk/meta/xsd"
                                              "/sra_1_3/SRA.experiment.xsd"})
-        for sample_name, sample_info in sorted(self.samples.iteritems()):
+        for sample_name, sample_info in sorted(self.samples.items()):
             sample_alias = self._get_sample_alias(sample_name)
             for row_number, prep_info in enumerate(sample_info['preps']):
                 experiment_alias = self._get_experiment_alias(sample_name,
@@ -443,7 +448,7 @@ class EBISubmission(object):
             "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
             "xsi:noNamespaceSchemaLocation": "ftp://ftp.sra.ebi.ac.uk/meta/xsd"
                                              "/sra_1_3/SRA.run.xsd"})
-        for sample_name, sample_info in sorted(self.samples.iteritems()):
+        for sample_name, sample_info in sorted(self.samples.items()):
             sample_alias = self._get_sample_alias(sample_name)
             for row_number, prep_info in enumerate(sample_info['preps']):
                 experiment_alias = self._get_experiment_alias(sample_name,
@@ -510,35 +515,26 @@ class EBISubmission(object):
         actions = ET.SubElement(submission, 'ACTIONS')
 
         study_action = ET.SubElement(actions, 'ACTION')
-        study_action_2 = ET.SubElement(study_action, action,
-            {
-                'schema': 'study',
-                'source': self.study_xml_fp
-            }
+        study_action_2 = ET.SubElement(study_action, action, {
+            'schema': 'study',
+            'source': self.study_xml_fp}
         )
 
         sample_action = ET.SubElement(actions, 'ACTION')
-        sample_action_2 = ET.SubElement(sample_action, action,
-            {
-                'schema': 'sample',
-                'source': self.sample_xml_fp
-            }
+        sample_action_2 = ET.SubElement(sample_action, action, {
+            'schema': 'sample',
+            'source': self.sample_xml_fp}
         )
 
         experiment_action = ET.SubElement(actions, 'ACTION')
-        experiment_action_2 = ET.SubElement(experiment_action, action,
-            {
-                'schema': 'experiment',
-                'source': self.experiment_xml_fp
-            }
+        experiment_action_2 = ET.SubElement(experiment_action, action, {
+            'schema': 'experiment',
+            'source': self.experiment_xml_fp}
         )
 
         run_action = ET.SubElement(actions, 'ACTION')
-        run_action_2 = ET.SubElement(run_action, action,
-            {
-                'schema': 'run',
-                'source': self.run_xml_fp
-            }
+        run_action_2 = ET.SubElement(run_action, action, {
+            'schema': 'run', 'source': self.run_xml_fp}
         )
 
         if action is 'ADD':
@@ -547,6 +543,41 @@ class EBISubmission(object):
             )
 
         return submission_set
+
+    def _write_xml_file(self, xml_gen_fn, attribute_name, fp,
+                        xml_gen_fn_arg=None):
+        """Writes an XML file after calling one of the XML generation
+        functions
+
+        Parameters
+        ----------
+        xml_gen_fn : function
+            The function that will be called to generate the XML that will be
+            written
+        attribute_name : str
+            The name of the attribute in which to store the output filepath
+        fp : str
+            The filepath to which the XML will be written
+        xml_gen_fn_arg : str, optional
+            Defaults to None. If None, no arguments will be passed to
+            xml_gen_fn. Otherwise, this will be passed as the only argument to
+            xml_gen_fn
+
+        Notes
+        -----
+        xml_gen_fn_arg is needed for generating the submission XML
+        """
+        if xml_gen_fn_arg is None:
+            xml_element = xml_gen_fn()
+        else:
+            xml_element = xml_gen_fn(xml_gen_fn_arg)
+
+        xml = minidom.parseString(ET.tostring(xml_element))
+
+        with open(fp, 'w') as outfile:
+            outfile.write(xml.toprettyxml(indent='  ', encoding='UTF-8'))
+
+        setattr(self, attribute_name, fp)
 
     def write_study_xml(self, fp):
         """Write the study XML file using the current data
@@ -560,15 +591,7 @@ class EBISubmission(object):
         -----
         If `fp` points to an existing file, it will be overwritten
         """
-        study_xml_element = self.generate_study_xml()
-
-        study_xml = minidom.parseString(ET.tostring(
-            study_xml_element))
-
-        with open(fp, 'w') as outfile:
-            outfile.write(study_xml.toprettyxml(indent='  ', encoding='UTF-8'))
-
-        self.study_xml_fp = fp
+        self._write_xml_file(self.generate_study_xml, 'study_xml_fp', fp)
 
     def write_sample_xml(self, fp):
         """Write the sample XML file using the current data
@@ -582,16 +605,7 @@ class EBISubmission(object):
         -----
         If `fp` points to an existing file, it will be overwritten
         """
-        sample_xml_element = self.generate_sample_xml()
-
-        sample_xml = minidom.parseString(ET.tostring(
-            sample_xml_element))
-
-        with open(fp, 'w') as outfile:
-            outfile.write(sample_xml.toprettyxml(indent='  ',
-                                                 encoding='UTF-8'))
-
-        self.sample_xml_fp = fp
+        self._write_xml_file(self.generate_sample_xml, 'sample_xml_fp', fp)
 
     def write_experiment_xml(self, fp):
         """Write the experiment XML file using the current data
@@ -605,16 +619,8 @@ class EBISubmission(object):
         -----
         If `fp` points to an existing file, it will be overwritten
         """
-        experiment_xml_element = self.generate_experiment_xml()
-
-        experiment_xml = minidom.parseString(ET.tostring(
-            experiment_xml_element))
-
-        with open(fp, 'w') as outfile:
-            outfile.write(experiment_xml.toprettyxml(indent='  ',
-                                                     encoding='UTF-8'))
-
-        self.experiment_xml_fp = fp
+        self._write_xml_file(self.generate_experiment_xml,
+                             'experiment_xml_fp', fp)
 
     def write_run_xml(self, fp):
         """Write the run XML file using the current data
@@ -628,15 +634,7 @@ class EBISubmission(object):
         -----
         If `fp` points to an existing file, it will be overwritten
         """
-        run_xml_element = self.generate_run_xml()
-
-        run_xml = minidom.parseString(ET.tostring(
-            run_xml_element))
-
-        with open(fp, 'w') as outfile:
-            outfile.write(run_xml.toprettyxml(indent='  ', encoding='UTF-8'))
-
-        self.run_xml_fp = fp
+        self._write_xml_file(self.generate_run_xml, 'run_xml_fp', fp)
 
     def write_submission_xml(self, fp, action):
         """Write the submission XML file using the current data
@@ -652,16 +650,8 @@ class EBISubmission(object):
         -----
         If `fp` points to an existing file, it will be overwritten
         """
-        submission_xml_element = self.generate_submission_xml(action)
-
-        submission_xml = minidom.parseString(ET.tostring(
-            submission_xml_element))
-
-        with open(fp, 'w') as outfile:
-            outfile.write(submission_xml.toprettyxml(indent='  ',
-                                                     encoding='UTF-8'))
-
-        self.submission_xml_fp = fp
+        self._write_xml_file(self.generate_submission_xml, 'submission_xml_fp',
+                             fp, action)
 
     def write_all_xml_files(study_fp, sample_fp, experiment_fp, run_fp,
                             submission_fp, action):
@@ -712,7 +702,7 @@ class EBISubmission(object):
 
             self.add_sample(sample_name, taxon_id=taxon_id,
                             description=description,
-                            empty_value='unknown', **sample)
+                            **sample)
 
         for prep_template in prep_templates:
             for prep in iter_file_via_list_of_dicts(prep_template):
@@ -727,7 +717,7 @@ class EBISubmission(object):
                 self.add_sample_prep(sample_name, platform, 'fastq',
                                      file_path, experiment_design_description,
                                      library_construction_protocol,
-                                     empty_value='unknown', **prep)
+                                     **prep)
 
     @classmethod
     def from_templates_and_demux_fastq(

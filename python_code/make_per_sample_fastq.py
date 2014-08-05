@@ -9,21 +9,6 @@ import click
 from skbio.parse.sequences.fastq import parse_fastq
 from skbio.format.sequences.fastq import format_fastq_record
 
-def write_fastq(output_file, fastq_data):
-    """Writes tuples of (defline, seq, qual) to an output file
-
-    Parameters
-    ----------
-    output_file : file
-        Data in `fastq_data` will be written to this file
-    fastq_data : iterable of tuples of (str, str, str)
-        Each item in `fastq_data` is a FASTQ entry, each of which is
-        represented by a tuple of (defline, sequence, quality).
-    """
-    for defline, seq, qual in fastq_data:
-        qual = ''.join([chr(x+ascii_increment) for x in qual])
-        output_file.write('@%s\n%s\n+\n%s\n' % (defline, seq, qual))
-
 def split_helper(input_fastq, output_directory, sequence_buffer_size=1000,
                  gzip=True):
     """Splits a demultiplexed FASTQ file into per-sample FASTQ files
